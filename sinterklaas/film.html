@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sinterklaasfilm</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #05060f; }
+  body { display: grid; place-items: center; }
+  video { width: 100vw; height: 100vh; object-fit: contain; background: #05060f; }
+</style>
+</head>
+<body>
+  <!-- ?v=bestand.mp4 kiest een andere video (standaard de proefversie) -->
+  <video id="v" autoplay loop muted playsinline controls></video>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.getElementById('v').src = q.get('v') || 'film_proef.mp4';
+  </script>
+</body>
+</html>

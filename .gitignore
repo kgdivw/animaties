@@ -1,0 +1,7 @@
+# renders en tussenresultaten
+_film/
+_snaps/
+*.mp4
+*.blend
+*.blend1
+__pycache__/
