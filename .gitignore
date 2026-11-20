@@ -5,3 +5,4 @@ _snaps/
 *.blend
 *.blend1
 __pycache__/
+*.wav

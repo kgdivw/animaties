@@ -254,6 +254,23 @@ def south_side(M):
               eave=top + 46 if k == 'flat' else None)
         lat += wm_
         i += 1
+    # verder langs de gracht (zichtbaar tijdens het draaien): eigen toeval, zodat de rij hierboven niet verandert
+    r2 = random.Random(77)
+    lat_end = lat
+    for side in (-1, 1):
+        lat = -15.0 if side < 0 else lat_end
+        while abs(lat) < 34:
+            wm_ = r2.uniform(3.6, 4.6)
+            a_, b_ = (lat - wm_, lat) if side < 0 else (lat, lat + wm_)
+            x0 = 836 + a_ * px(dh); x1 = 836 + b_ * px(dh)
+            hgt = r2.uniform(7.0, 9.5)
+            top = 520 - (hgt - 2.2) * px(dh)
+            k = kinds[i % len(kinds)]
+            house(M, 'overkant%d' % i, x0, x1, top, d=dh, wall=['brick', 'plaster', 'brick2', 'stone_grey'][i % 4], kind=k, base=base,
+                  rows=((base - 175, 40), (base - 110, 44), (base - 52, 46)), cols=2, seed=60 + i, power=3,
+                  eave=top + 46 if k == 'flat' else None)
+            lat += side * wm_
+            i += 1
     # de pakjesboot, aan de kade
     db = dq + 1.75
     boat(M, 0.0, db, WATER_Z)

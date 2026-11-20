@@ -575,6 +575,165 @@ def scene4(lt, t):
     put_char(v, P1, 'piet', c1, 1.0)
 
 
+# ======================================================================== schimmen achter de ramen (scène 1)
+# Zoals drawHouseSilhouettes in anim.js: als de Pieten in de schoorsteen zitten, lopen ze als donkere schim
+# achter de verlichte ramen. Elke schim is een kopie van het Piet-skelet, platgedrukt (ouder-empty met
+# schaal y≈0) op een vlak net vóór het glas en achter de roedes; het materiaal is alleen zichtbaar binnen de ramen.
+D_FAC = L.ground_d(702)
+ROOMS = {
+    'attic': {'clip': [(1114, 368, 60, 76)], 'floor': 452, 's': 0.42, 'd': D_FAC - 0.2 - 0.021},
+    'ground': {'clip': [(1072, 534, 56, 90), (1158, 534, 56, 90)], 'floor': 632, 's': 0.56, 'd': D_FAC - 0.021},
+}
+INSIDE = {
+    'piet2': [((0.534, 0.556), 'attic', 'drop', {'x': 1150, 'dir': -1}),
+              ((0.556, 0.578), 'attic', 'walk', {'x0': 1150, 'x1': 1092}),
+              ((0.585, 0.622), 'ground', 'walk', {'x0': 1032, 'x1': 1100}),
+              ((0.622, 0.648), 'ground', 'put', {'x': 1100, 'dir': 1}),
+              ((0.648, 0.700), 'ground', 'walk', {'x0': 1100, 'x1': 1258, 'noProp': True})],
+    'piet1': [((0.634, 0.656), 'attic', 'drop', {'x': 1146, 'dir': 1}),
+              ((0.656, 0.675), 'attic', 'walk', {'x0': 1146, 'x1': 1206}),
+              ((0.682, 0.705), 'ground', 'walk', {'x0': 1256, 'x1': 1186}),
+              ((0.705, 0.724), 'ground', 'wave', {'x': 1186, 'dir': -1}),
+              ((0.724, 0.768), 'ground', 'walk', {'x0': 1186, 'x1': 1030})],
+}
+SIL_COL, SIL_ALPHA = (0.021, 0.0045, 0.0015), 0.88       # rgb(40,13,5), lineair
+
+
+def sil_material():
+    m = bpy.data.materials.new('schim')
+    m.use_nodes = True
+    nt = m.node_tree; N = nt.nodes; Lk = nt.links
+    N.clear()
+    out = N.new('ShaderNodeOutputMaterial')
+    em = N.new('ShaderNodeEmission'); em.inputs['Color'].default_value = SIL_COL + (1,); em.inputs['Strength'].default_value = 1.0
+    trn = N.new('ShaderNodeBsdfTransparent')
+    mix = N.new('ShaderNodeMixShader')
+    geo = N.new('ShaderNodeNewGeometry')
+    sep = N.new('ShaderNodeSeparateXYZ'); Lk.new(geo.outputs['Position'], sep.inputs[0])
+
+    def cmp(sock, val, op):
+        n = N.new('ShaderNodeMath'); n.operation = op; Lk.new(sock, n.inputs[0]); n.inputs[1].default_value = val
+        return n.outputs[0]
+
+    def op2(a, b, op):
+        n = N.new('ShaderNodeMath'); n.operation = op; Lk.new(a, n.inputs[0]); Lk.new(b, n.inputs[1])
+        return n.outputs[0]
+
+    acc = None
+    for R in ROOMS.values():
+        for (x, y, w, h) in R['clip']:
+            a, b = L.S2W(x, y + h, R['d']), L.S2W(x + w, y, R['d'])
+            inside = op2(op2(cmp(sep.outputs[0], a.x, 'GREATER_THAN'), cmp(sep.outputs[0], b.x, 'LESS_THAN'), 'MULTIPLY'),
+                         op2(cmp(sep.outputs[2], a.z, 'GREATER_THAN'), cmp(sep.outputs[2], b.z, 'LESS_THAN'), 'MULTIPLY'), 'MULTIPLY')
+            acc = inside if acc is None else op2(acc, inside, 'MAXIMUM')
+    fac = N.new('ShaderNodeMath'); fac.operation = 'MULTIPLY'; Lk.new(acc, fac.inputs[0]); fac.inputs[1].default_value = SIL_ALPHA
+    Lk.new(fac.outputs[0], mix.inputs[0]); Lk.new(trn.outputs[0], mix.inputs[1]); Lk.new(em.outputs[0], mix.inputs[2])
+    Lk.new(mix.outputs[0], out.inputs['Surface'])
+    return m
+
+
+SIL_MAT = sil_material()
+
+
+def sil_ray_vis(o):
+    o.visible_shadow = False; o.visible_diffuse = False; o.visible_glossy = False
+    o.visible_transmission = False; o.visible_volume_scatter = False
+
+
+def build_sil(maker):
+    arm, props, objs = build_rig(maker, col='schimmen')
+    flat = bpy.data.objects.new('plat_' + arm.name, None)
+    L.coll('schimmen').objects.link(flat)
+    flat.scale = (1, 0.002, 1)
+    for o in objs:
+        if o.type == 'MESH':
+            for i in range(len(o.material_slots)):
+                o.material_slots[i].link = 'OBJECT'
+                o.material_slots[i].material = SIL_MAT
+            sil_ray_vis(o)
+    arm.parent = flat
+    return arm, props, objs, flat
+
+
+K6 = '#000000'
+SIL = {'piet2': build_sil(BC.make_piet('schim_pakje', K6, K6, K6, K6, 'gift', 4)) + ('gift',),
+       'piet1': build_sil(BC.make_piet('schim_zak', K6, K6, K6, K6, 'sack', 3)) + ('sack',)}
+
+# het neergezette pakje op de vensterbank (pixelrechthoeken zoals in anim.js)
+_gd = ROOMS['ground']['d'] + 0.001
+SIL_GIFT = []
+for (x, y, w, h) in ((1103, 607, 20, 17), (1107, 595, 12, 12)):
+    a, b = L.S2W(x, y + h, _gd), L.S2W(x + w, y, _gd)
+    SIL_GIFT.append(L.obj_from('schim_pakje_bank', [Vector((a.x, _gd, a.z)), Vector((b.x, _gd, a.z)), Vector((b.x, _gd, b.z)), Vector((a.x, _gd, b.z))],
+                               [(0, 1, 2, 3)], SIL_MAT, col='schimmen'))
+for (cx, ang) in ((1110, -0.5), (1117, 0.5)):
+    pts = []
+    for k in range(12):
+        u = k / 12 * 2 * math.pi
+        ex, ey = math.cos(u) * 4, math.sin(u) * 2.5
+        pts.append(L.S2W(cx + ex * math.cos(ang) - ey * math.sin(ang), 593 + ex * math.sin(ang) + ey * math.cos(ang), _gd))
+    SIL_GIFT.append(L.obj_from('schim_strik', pts, [tuple(range(12))], SIL_MAT, col='schimmen'))
+for o in SIL_GIFT:
+    sil_ray_vis(o)
+
+
+def sil_hide_all():
+    for v in SIL.values():
+        set_visible(v[2], False)
+    for o in SIL_GIFT:
+        o.hide_render = True
+
+
+def sil_update(p, t):
+    for o in SIL_GIFT:
+        o.hide_render = p < 0.638
+    for key, segs in INSIDE.items():
+        sg = next((s for s in segs if s[0][0] <= p < s[0][1]), None)
+        if not sg:
+            continue
+        (p0, p1), room, kind, a = sg
+        R = ROOMS[room]
+        arm, props, objs, flat, prop = SIL[key]
+        set_visible(objs, True)
+        u = (p - p0) / (p1 - p0)
+        dw = R['d']
+        sc = R['s'] / 1.09 * 1.22 * dw / (D_RIDGE - 0.15)       # zelfde verhouding als op het dak in anim.js
+        st = {'t': t, 'wind': 0, 'walk': 0, 'ph': 0, 'hideProp': bool(a.get('noProp'))}
+        y = R['floor']
+        if kind == 'walk':
+            x = lerp(a['x0'], a['x1'], u)
+            yaw = PI / 2 if a['x1'] > a['x0'] else -PI / 2
+            st['walk'] = 1
+            st['ph'] = abs(x - a['x0']) * dw / L.F_PX / (STRIDE['piet'] * sc) * 2 * PI
+        elif kind == 'drop':
+            x = a['x']
+            fall = smooth(0, 0.5, u)
+            y = R['floor'] - (1 - fall * fall) * 130
+            st['air'] = 1 - smooth(0.45, 0.55, u)
+            st['jump'] = smooth(0.48, 0.56, u) * (1 - smooth(0.62, 0.85, u))
+            yaw = lerp(0, a['dir'] * PI / 2, smooth(0.7, 1, u))
+        elif kind == 'put':
+            x = a['x']; yaw = a['dir'] * PI / 2
+            st['jump'] = math.sin(PI * clamp(u * 1.2, 0, 1)) * 0.75
+            st['hideProp'] = u > 0.55
+        else:   # wave
+            x = a['x']; yaw = lerp(a['dir'] * PI / 2, 0, smooth(0, 0.25, u))
+            st['armsUp'] = smooth(0.15, 0.3, u) * (1 - smooth(0.75, 0.95, u))
+            st['nod'] = math.sin(u * 2 * PI * 2) * 0.08
+        PO.apply_pose(arm, PO.piet(st, prop), props)
+        # het skelet staat in het kader van de platte ouder (schaal y 0.002 rond y = dw)
+        flat.location = (0, dw, 0)
+        pos = L.S2W(x, y, dw)
+        arm.location = (pos.x, 0, pos.z)
+        arm.rotation_euler = (0, 0, yaw)
+        arm.scale = (sc, sc, sc)
+        if kind != 'drop' or u > 0.5:
+            snap(arm, 'piet', L.S2W(x, R['floor'], dw).z, sc)
+
+
+sil_hide_all()
+
+
 # ======================================================================== frame
 ALL_CHARS = HORSE_OBJS + RIDER_OBJS + P2_OBJS + P1_OBJS
 CHAR_ROOF = L.coll('chars')
@@ -607,7 +766,9 @@ def frame(t):
         o.hide_render = act != 's2'
     for (ob, rib) in PILE:
         ob.hide_render = rib.hide_render = act != 's3'
+    sil_hide_all()
     if act == 's1':
+        sil_update((t - SC['s1'][0]) / (SC['s1'][1] - SC['s1'][0]), t)
         scene1((t - SC['s1'][0]) / (SC['s1'][1] - SC['s1'][0]), t)
     elif act == 's2':
         scene2(t - SC['s2'][0], t)
@@ -648,6 +809,7 @@ if args.engine == 'cycles':
             print('geen GPU gevonden, render op CPU', flush=True)
     scene.cycles.samples = args.samples
     scene.cycles.use_denoising = True
+    scene.cycles.transparent_max_bounces = 64      # platte schimmen = veel doorzichtige lagen boven elkaar
     scene.cycles.max_bounces = 4; scene.cycles.diffuse_bounces = 2; scene.cycles.glossy_bounces = 2
     scene.cycles.caustics_reflective = False; scene.cycles.caustics_refractive = False
     scene.view_settings.view_transform = 'Standard'

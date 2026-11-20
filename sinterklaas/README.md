@@ -166,6 +166,42 @@ Daarna lucht, gloed en mp4 (ffmpeg moet in het pad staan, of zet `FFMPEG=/pad/na
 python blender/post_frames.py _film/final --bloom --fps 25 --mp4 film.mp4
 ```
 
+Muziek eronder (zie hieronder):
+
+```bash
+ffmpeg -y -i film.mp4 -i muziek/deuntje.mp3 -c:v copy -c:a aac -b:a 192k -shortest film_muziek.mp4
+```
+
+Eén mooi beeld (bijvoorbeeld frame 571: Piet zet het pakje neer, als schim achter het raam):
+
+```bash
+blender -b --python blender/film.py -- --out _film/still --engine cycles --res 100 --samples 128 --frames 571 --device gpu
+```
+
+### Schimmen achter de ramen (Blender)
+
+Net als in de browserversie lopen de Pieten na de sprong in de schoorsteen als schim
+achter de verlichte ramen van het grote huis (scène 1, 19–28 s). In `film.py` zijn dat
+kopieën van de Piet-skeletten, platgedrukt op een vlak tussen het glas en de roedes, met
+een materiaal dat alleen binnen de raamrechthoeken zichtbaar is (`ROOMS`, `INSIDE`, `sil_update`).
+
+### Muziek
+
+`muziek/deuntje.py` maakt het traditionele "Sinterklaas kapoentje" als polka (klokkenspel,
+fluit, oempa-bas, sleebelletjes, paardenhoeven, harpglissando bij elke camerazwaai). Het
+duurt precies 94 s, één maat per seconde, en loopt naadloos rond. In de schoorsteenscène
+klinkt het zacht en in mineur.
+
+```bash
+python muziek/deuntje.py muziek/deuntje.wav
+```
+
+```bash
+ffmpeg -y -i muziek/deuntje.wav -c:a libmp3lame -b:a 192k muziek/deuntje.mp3
+```
+
+`film.html?v=film_muziek.mp4` speelt de film in een lus, met een knop voor het geluid als de browser automatisch geluid blokkeert.
+
 ## Wat beweegt los
 
 - **Personages (3D, kunnen draaien):** Sint, twee Pieten, het paard

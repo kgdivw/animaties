@@ -8,14 +8,23 @@
   html, body { margin: 0; height: 100%; background: #05060f; }
   body { display: grid; place-items: center; }
   video { width: 100vw; height: 100vh; object-fit: contain; background: #05060f; }
+  #geluid { position: fixed; right: 16px; bottom: 64px; padding: 10px 16px; border: 0; border-radius: 999px;
+            background: rgba(255, 216, 144, .92); color: #3a1a08; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+  #geluid[hidden] { display: none; }
 </style>
 </head>
 <body>
   <!-- ?v=bestand.mp4 kiest een andere video (standaard de proefversie) -->
-  <video id="v" autoplay loop muted playsinline controls></video>
+  <video id="v" autoplay loop playsinline controls></video>
+  <button id="geluid" hidden>🔊 geluid aan</button>
   <script>
     const q = new URLSearchParams(location.search);
-    document.getElementById('v').src = q.get('v') || 'film_proef.mp4';
+    const v = document.getElementById('v'), b = document.getElementById('geluid');
+    v.src = q.get('v') || 'film_proef.mp4';
+    // eerst mét geluid proberen; blokkeert de browser dat, dan stil afspelen met een knop voor het geluid
+    v.play().catch(() => { v.muted = true; v.play(); b.hidden = false; });
+    b.onclick = () => { v.muted = false; v.play(); b.hidden = true; };
+    v.addEventListener('volumechange', () => { if (!v.muted) b.hidden = true; });
   </script>
 </body>
 </html>
