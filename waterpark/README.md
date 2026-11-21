@@ -7,6 +7,39 @@ blauwe slingerbaan, lazy river met ophaalbrug, en als finale kiept de reuzenemme
 Alles in de scène is een **pure functie van de muziektijd** (`renderAt(t)`): geen opgebouwde
 state, dus nooit drift. Een trage frame slaat over, en een export rendert elke frame exact op `t = i/fps`.
 
+## De hele film in één keer
+
+```bash
+python make_film.py                    # Blender-look (Eevee 1080p) -> waterpark_film.mp4
+python make_film.py --look threejs     # three.js-look uit de browser -> waterpark_sunrise_fever.mp4
+```
+
+Nodig: Chrome of Edge, Blender (4.2 of nieuwer), ffmpeg in het PATH, en internet (three.js komt van unpkg).
+Blender en de browser worden zelf gezocht; anders geef je `--blender <pad>` of `--browser <pad>`.
+
+Wat er gebeurt bij de Blender-look:
+
+1. **Bake** (±40 s): de scène draait onzichtbaar in de browser. Die schrijft `_film/scene.glb` en per frame
+   de stand van alles wat beweegt: camera, zon, poppetjes, emmer, brug, fonteinen, lampen, golfslagbad en spetters.
+2. **Render**: Blender laadt de scène één keer en rendert elke frame naar `_film/frames/`.
+   Afbreken mag: bij een herstart gaat het verder waar het gebleven was.
+3. **mp4**: ffmpeg plakt de frames en de muziek samen (H.264 CRF 17, AAC 320k).
+
+Verandert `index.html`, dan wordt de scène vanzelf opnieuw gebakken en gaan de oude frames weg.
+
+| Optie | Wat |
+|---|---|
+| `--engine eevee\|cycles` | standaard Eevee |
+| `--samples 16` | samples per frame |
+| `--res 1920x1080` | resolutie |
+| `--device gpu` | voor Cycles: eerste beschikbare GPU |
+| `--t0 60 --t1 70` | alleen een stuk (seconden) |
+| `--only bake\|render` | stoppen na die stap |
+| `--rebake` / `--clean` | scène opnieuw bakken / alle frames weggooien |
+
+Twee computers tegelijk laten renderen: zelfde bake (map `_film`) op beide zetten, en op elk een eigen stuk renderen met
+`blender -b --python blender/look_still.py -- --film _film --range 0:2400` (en `2400:`). Daarna `python make_film.py` voor de mp4.
+
 ## Bekijken
 
 Vanuit de map `animaties`:
@@ -80,5 +113,5 @@ Opties:
 
 Op de CPU kost het ontruisen het meest (23 s per 1080p-frame op HIGH). Met een GPU zakt dat drastisch.
 
-Let op: dit rendert **stills** per geëxporteerd moment. Een volledige film in de Blender-look
-heeft nog een pipeline nodig die de animatie in Blender zelf afspeelt; nu kost elke glb-import zo'n 5 s.
+Voor de hele film: zie *De hele film in één keer* hierboven (`make_film.py`).
+Gemeten hier: Eevee op 960×540 met 8 samples ±6–12 s per frame, op deze CPU zonder GPU. Met een videokaart gaat het veel sneller.

@@ -97,6 +97,7 @@ scene.fog = new THREE.Fog(0xbfe6ff, 120, 380);
 const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 1000);
 // ?render=1 -> vaste 1920x1080 buffer voor de video-export
 const RENDER = new URLSearchParams(location.search).has('render'), VW = 1920, VH = 1080;
+let NORENDER = false;                            // bake: alleen de scènestaat berekenen
 function resize() {
   if (RENDER) { renderer.setPixelRatio(1); renderer.setSize(VW, VH, false); camera.aspect = VW / VH; }
   else { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; }
@@ -835,7 +836,7 @@ function renderAt(t) {
   const fl = Math.max(b >= 32 && b < 33 ? 1 - (b - 32) * 3 : 0, b >= 72 && b < 73 ? 1 - (b - 72) * 3 : 0, b >= HIT && b < HIT + 1 ? .55 - (b - HIT) * 1.5 : 0);
   OVER.flash = clamp(fl * .85); OVER.fade = clamp(Math.max(1 - b * 1.5, (b - 95.6) / 1.4));
   flash.style.opacity = OVER.flash; fade.style.opacity = OVER.fade;
-  renderer.render(scene, camera);
+  if (!NORENDER) renderer.render(scene, camera);
   // HUD
   const bar = Math.floor(b), beat = Math.floor((b - bar) * 4) + 1;
   hud.sec.textContent = sec[0];
@@ -922,6 +923,77 @@ window.__exportBar = async (bb, name) => {
   await saveData(name + '.json', JSON.stringify(meta));
   return { name, drops: drp.length, kb: Math.round(glb.byteLength / 1024) };
 };
+/* ---- film-bake voor Blender: de hele scène één keer als .glb (namen voor alles wat beweegt) + per frame
+   de staat van alles wat beweegt (Float32) -> POST /bake/*. make_film.py vangt het op.
+   Blok per frame: cam pos3 quat4 fov | zon dir3 | flits, fade | per object pos3 quat4 schaal3 zichtbaar |
+                   per materiaal emissive rgb + intensiteit + opacity | golfslagbad hoogtes.  Spetters apart. */
+window.__bakeFilm = async (fps = 30, t0 = 0, t1 = DUR) => {
+  const { GLTFExporter } = await import('three/addons/exporters/GLTFExporter.js');
+  const post = (path, body) => fetch(path, { method: 'POST', body });
+  NORENDER = true; playing = false;
+  const N = Math.ceil((t1 - t0) * fps), T = i => t0 + i / fps;
+  const skip = new Set([sky, drops, sun, sun.target, hemi]); clouds.forEach(c => c.traverse(o => skip.add(o)));
+  const objs = [], mats = new Set();
+  scene.traverse(o => { if (o === scene || skip.has(o)) return; objs.push(o); if (o.isMesh && o.material) mats.add(o.material); });
+  const matList = [...mats];
+  const oKey = o => [...o.position.toArray(), ...o.quaternion.toArray(), ...o.scale.toArray(), o.visible ? 1 : 0];
+  const mKey = m => [...(m.emissive ? m.emissive.toArray() : [0, 0, 0]), m.emissiveIntensity ?? 0, m.opacity];
+  // pas 1: wat beweegt er? (of is ergens onzichtbaar -> ook volgen, Blender kent geen three-zichtbaarheid)
+  renderAt(T(0));
+  const o0 = objs.map(oKey), m0 = matList.map(mKey), oMove = objs.map(o => !o.visible), mMove = matList.map(() => false);
+  const diff = (a, b) => a.some((v, k) => Math.abs(v - b[k]) > 1e-5);
+  for (let i = 1; i < N; i++) {
+    renderAt(T(i));
+    objs.forEach((o, k) => { if (!oMove[k] && diff(oKey(o), o0[k])) oMove[k] = true; });
+    matList.forEach((m, k) => { if (!mMove[k] && diff(mKey(m), m0[k])) mMove[k] = true; });
+    if (i % 300 === 0) await post('/bake/log', `pas 1: ${i}/${N}`);
+  }
+  const AO = objs.filter((o, k) => oMove[k]), AM = matList.filter((m, k) => mMove[k]);
+  // pas 2: export met namen. Materialen krijgen hun soort; gevolgde materialen ~<index>
+  renderAt(T(0));
+  const figSet = new Set(); FIGS.forEach(f => f.root.traverse(o => figSet.add(o)));
+  const oldNames = objs.map(o => o.name), oldM = matList.map(m => m.name);
+  AO.forEach((o, k) => o.name = '__a' + k);
+  const wpMesh = objs.find(o => o.isMesh && o.geometry === waveGeo); wpMesh.name = wpMesh.name.startsWith('__a') ? wpMesh.name : '__wavepool';
+  scene.traverse(o => {
+    if (!o.isMesh || !o.material || skip.has(o)) return;
+    const mt = o.material, hex = mt.color ? mt.color.getHexString() : '';
+    if (figSet.has(o)) mt.name = hex === '1d1d22' ? 'fig_ink' : 'fig_' + hex;
+    else mt.name = (hex === 'ffd23b') ? (mt.transparent ? 'slide_yellow' : 'plastic_yellow') : (KIND[hex] || 'misc_' + hex);
+  });
+  AM.forEach((m, k) => m.name += '~' + k);
+  const removed = [sky, drops, ...clouds]; removed.forEach(o => scene.remove(o));
+  const glb = await new GLTFExporter().parseAsync(scene, { binary: true, onlyVisible: false });
+  removed.forEach(o => scene.add(o));
+  await post('/bake/start', '');
+  await post('/bake/file?name=scene.glb', new Blob([glb]));
+  const header = { fps, t0, t1, n: N, objects: AO.map(o => o.name), mats: AM.map(m => m.name), wavepool: wpMesh.name,
+    wave_n: wavePos.count, block: 13 + AO.length * 11 + AM.length * 5 + wavePos.count };
+  await post('/bake/file?name=bake.json', JSON.stringify(header));
+  objs.forEach((o, k) => o.name = oldNames[k]); matList.forEach((m, k) => m.name = oldM[k]);
+  // pas 3: per frame de staat
+  const B = header.block, CH = 120, m4 = new THREE.Matrix4(), dp = new V(), dq = new THREE.Quaternion(), ds = new V();
+  for (let c0 = 0; c0 < N; c0 += CH) {
+    const n = Math.min(CH, N - c0), buf = new Float32Array(n * B), dl = [];
+    for (let j = 0; j < n; j++) {
+      renderAt(T(c0 + j));
+      const a = [...camera.position.toArray(), ...camera.quaternion.toArray(), camera.fov, ...sun.position.clone().normalize().toArray(), OVER.flash, OVER.fade];
+      for (const o of AO) a.push(...oKey(o));
+      for (const m of AM) a.push(...mKey(m));
+      buf.set(a, j * B);
+      for (let k = 0; k < wavePos.count; k++) buf[j * B + a.length + k] = wavePos.array[k * 3 + 1];
+      const d = [];
+      for (let k = 0; k < NP; k++) { drops.getMatrixAt(k, m4); m4.decompose(dp, dq, ds); if (ds.x > 1e-3) d.push(dp.x, dp.y, dp.z, ds.x * .13); }
+      dl.push(d.length / 4, ...d);
+    }
+    await post('/bake/append?name=frames.bin', new Blob([buf]));
+    await post('/bake/append?name=drops.bin', new Blob([new Float32Array(dl)]));
+    await post('/bake/log', `pas 2: ${Math.min(c0 + CH, N)}/${N}`);
+  }
+  await post('/bake/done', '');
+  NORENDER = false;
+  return header;
+};
 window.__progress = 0;
 window.__renderVideo = async (fps = 30, t0 = 0, t1 = DUR) => {
   const c2 = document.createElement('canvas'); c2.width = VW; c2.height = VH;
@@ -941,8 +1013,16 @@ window.__renderVideo = async (fps = 30, t0 = 0, t1 = DUR) => {
 };
 if (RENDER) for (const id of ['hud', 'bar', 'start', 'flash', 'fade']) document.getElementById(id).classList.add('hidden');
 
+// automatisch (make_film.py): ?bake=<fps> of ?render=1&auto=<fps>, optioneel &t0=&t1=; fouten naar /bake/log
+if (q.has('bake') || q.has('auto')) {
+  const err = m => fetch('/bake/error', { method: 'POST', body: String(m) });
+  addEventListener('error', e => err(e.message + ' @' + e.lineno)); addEventListener('unhandledrejection', e => err(e.reason && (e.reason.stack || e.reason)));
+  const f = +(q.get('bake') || q.get('auto')) || 30, a = +(q.get('t0') || 0), z = +(q.get('t1') || DUR);
+  (q.has('bake') ? window.__bakeFilm(f, a, z) : window.__renderVideo(f, a, z)).catch(e => err(e.stack || e));
+}
+
 function loop(ms) {
-  if (RENDER) return;                                          // export stuurt zelf de frames
+  if (RENDER || q.has('bake')) return;                        // export/bake stuurt zelf de frames
   requestAnimationFrame(loop);
   if (lastNow) fps = lerp(fps, 1000 / Math.max(1, ms - lastNow), .05); lastNow = ms;
   renderAt(now());

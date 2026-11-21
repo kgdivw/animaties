@@ -5,15 +5,23 @@ schrijft _snaps/<naam>.glb + <naam>.json (camera, zon, spetters).
 
   blender -b --python look_still.py -- --in ../_snaps/wp_intro --out ../_snaps/look_intro.png --res 1280x720 --samples 64
 
+Film: --film ../_film leest een bake van window.__bakeFilm (scene.glb + bake.json + frames.bin + drops.bin)
+en rendert elke frame naar <film>/frames/f_00000.png (bestaande frames worden overgeslagen -> hervatbaar).
+Dit wordt normaal aangeroepen door make_film.py.
+
 Poppetjes (materialen fig_*) blijven zoals ze zijn; al de rest krijgt een nieuw materiaal per soort.
 """
 import bpy, bmesh, sys, os, json, math, argparse, time
+import numpy as np
 from mathutils import Vector, Quaternion
 
 argv = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
 ap = argparse.ArgumentParser()
-ap.add_argument('--in', dest='inp', required=True)          # pad zonder extensie
-ap.add_argument('--out', required=True)
+ap.add_argument('--in', dest='inp', default='')               # pad zonder extensie
+ap.add_argument('--out', default='')
+ap.add_argument('--film', default='')                        # map met een film-bake
+ap.add_argument('--range', default='')                       # frames a:b (film)
+ap.add_argument('--engine', default='')                      # eevee | cycles (standaard: cycles, film: eevee)
 ap.add_argument('--res', default='1280x720')
 ap.add_argument('--samples', type=int, default=64)
 ap.add_argument('--exposure', type=float, default=0.0)
@@ -28,7 +36,23 @@ args = ap.parse_args(argv)
 
 bpy.ops.wm.read_factory_settings(use_empty=True)
 scene = bpy.context.scene
-meta = json.load(open(args.inp + '.json'))
+if args.film:
+    F = os.path.abspath(args.film)
+    BAKE = json.load(open(os.path.join(F, 'bake.json')))
+    NB, BLK = BAKE['n'], BAKE['block']
+    FR = np.memmap(os.path.join(F, 'frames.bin'), dtype=np.float32, mode='r', shape=(NB, BLK))
+    DR = np.fromfile(os.path.join(F, 'drops.bin'), dtype=np.float32)
+    DOFF, k = [], 0                                    # per frame: [aantal, x,y,z,r, ...]
+    while k < len(DR): DOFF.append(k); k += 1 + int(DR[k]) * 4
+    f0 = FR[0]
+    meta = {'cam': {'pos': f0[0:3].tolist(), 'quat': f0[3:7].tolist(), 'fov': float(f0[7])}, 'sun': {'dir': f0[8:11].tolist()}, 'drops': []}
+    GLB = os.path.join(F, 'scene.glb')
+else:
+    meta = json.load(open(args.inp + '.json'))
+    GLB = os.path.abspath(args.inp + '.glb')
+
+
+def kind_of(mat): return mat.name.split('.')[0].split('~')[0]     # 'lamp~3.001' -> 'lamp'
 
 
 def t2b(v):            # three.js (y-up) -> Blender (z-up)
@@ -41,7 +65,7 @@ def hexlin(h):
 
 
 # ------------------------------------------------------------------ import
-bpy.ops.import_scene.gltf(filepath=os.path.abspath(args.inp + '.glb'))
+bpy.ops.import_scene.gltf(filepath=GLB)
 for ob in list(scene.objects):
     if ob.type in ('LIGHT', 'CAMERA'):
         bpy.data.objects.remove(ob, do_unlink=True)
@@ -287,7 +311,7 @@ def frond_mesh():
 FROND = frond_mesh()
 nleaf = 0
 for ob in list(scene.objects):
-    if ob.type == 'MESH' and ob.material_slots and ob.material_slots[0].material and ob.material_slots[0].material.name.split('.')[0] == 'leaf':
+    if ob.type == 'MESH' and ob.material_slots and ob.material_slots[0].material and kind_of(ob.material_slots[0].material) == 'leaf':
         ob.data = FROND; ob.data.materials.clear() if False else None; nleaf += 1
 if not FROND.materials: FROND.materials.append(bpy.data.materials.new('leaf'))
 print('FRONDS', nleaf)
@@ -324,7 +348,7 @@ hills()
 # Attribuut 'up' = -sin(a): +1 bovenin het dak, -1 onderin de goot. (Volgorde blijft behouden door glTF.)
 for ob in scene.objects:
     if ob.type != 'MESH' or not ob.material_slots or not ob.material_slots[0].material: continue
-    if ob.material_slots[0].material.name.split('.')[0] != 'slide_yellow': continue
+    if kind_of(ob.material_slots[0].material) != 'slide_yellow': continue
     me = ob.data; n = len(me.vertices); full = n == 501 * 21
     arc = math.tau if full else math.pi
     at = me.attributes.new('up', 'FLOAT', 'POINT')
@@ -362,11 +386,22 @@ def m_tube(variant):
 LIB['slide_yellow'] = m_tube(args.tube)
 
 stats = {}
+TRACK = {}                                         # film: gevolgd materiaal-index -> (soort, materiaal in Blender)
 for ob in scene.objects:
     if ob.type != 'MESH': continue
     for slot in ob.material_slots:
         if not slot.material: continue
-        name = slot.material.name.split('.')[0]
+        name = kind_of(slot.material)
+        tr = slot.material.name.split('.')[0].split('~')
+        if len(tr) > 1 and name != 'lamp' and not name.startswith('fig_'):    # bv. golfringen die uitfaden: eigen kopie
+            key = int(tr[1])
+            if key not in TRACK:
+                base = lib(name); m = base.copy() if base else slot.material
+                try: m.surface_render_method = 'DITHERED'
+                except Exception: pass
+                TRACK[key] = (name, m)
+            slot.material = TRACK[key][1]; continue
+        if len(tr) > 1: TRACK[int(tr[1])] = (name, slot.material)
         if name.startswith('fig_'): stats['fig'] = stats.get('fig', 0) + 1; continue    # poppetjes: as-is
         if name == 'lamp':
             bs = slot.material.node_tree.nodes.get('Principled BSDF')
@@ -453,6 +488,20 @@ for look in ('AgX - Medium High Contrast', 'Medium High Contrast', 'AgX - Punchy
 vs.exposure = args.exposure
 r.image_settings.file_format = 'PNG'
 r.filepath = os.path.abspath(args.out)
+
+
+def use_eevee():
+    r.engine = 'BLENDER_EEVEE'
+    ee = scene.eevee
+    for k, v in [('taa_render_samples', args.esamples), ('use_raytracing', True), ('use_shadows', True), ('shadow_ray_count', 2),
+                 ('shadow_step_count', 8), ('use_volumetric_shadows', False), ('fast_gi_method', 'GLOBAL_ILLUMINATION')]:
+        try: setattr(ee, k, v)
+        except Exception: pass
+    try: w.sun_threshold = 2.0; w.sun_angle = math.radians(.8); w.use_sun_shadow = True   # zon uit de lucht halen, met schaduw
+    except Exception: pass
+
+
+if (args.engine or ('eevee' if args.film else 'cycles')) == 'eevee': use_eevee()
 if args.save: bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(args.save))
 
 
@@ -462,7 +511,9 @@ def render_to(path):
     dt = time.time() - t0; print('RENDERED', r.filepath, 'in %.1fs' % dt); return dt
 
 
-if not args.ladder:
+if args.film:
+    exec(compile(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'film.py'), encoding='utf-8').read(), 'film.py', 'exec'))
+elif not args.ladder:
     render_to(args.out)
 else:
     # Kwaliteitsladder: dezelfde scène, één keer geladen, met een vaste tijd per frame.
@@ -474,14 +525,7 @@ else:
             r.engine = 'CYCLES'; c.samples = 4096; c.time_limit = float(cfg[1:])
             c.use_adaptive_sampling = True; c.adaptive_threshold = .02
         else:
-            r.engine = 'BLENDER_EEVEE'
-            ee = scene.eevee
-            for k, v in [('taa_render_samples', args.esamples), ('use_raytracing', True), ('use_shadows', True), ('shadow_ray_count', 2),
-                         ('shadow_step_count', 8), ('use_volumetric_shadows', False), ('fast_gi_method', 'GLOBAL_ILLUMINATION')]:
-                try: setattr(ee, k, v)
-                except Exception: pass
-            try: w.sun_threshold = 2.0; w.sun_angle = math.radians(.8); w.use_sun_shadow = True   # zon uit de lucht halen, met schaduw
-            except Exception: pass
+            use_eevee()
         times.append((cfg, round(render_to('%s_%s.png' % (base, cfg)), 1)))
     json.dump(times, open(base + '_times.json', 'w'), indent=1)
     print('LADDER', times)
