@@ -1,0 +1,49 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "kerst_test",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8777",
+        "--directory",
+        "kerst_test"
+      ],
+      "port": 8777
+    },
+    {
+      "name": "sinterklaas",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        ".claude/tools/devserver.py",
+        "8778",
+        "sinterklaas"
+      ],
+      "port": 8778
+    },
+    {
+      "name": "waterpark",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        ".claude/tools/devserver.py",
+        "8779",
+        "waterpark"
+      ],
+      "port": 8779
+    },
+    {
+      "name": "waterpark-render",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        ".claude/tools/framepipe.py",
+        "8780",
+        "waterpark",
+        "waterpark/Sunrise_Fever.mp3",
+        "waterpark/waterpark_sunrise_fever.mp4"
+      ],
+      "port": 8780
+    }
+  ]
+}
